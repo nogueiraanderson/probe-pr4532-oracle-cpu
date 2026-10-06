@@ -41,8 +41,8 @@ Two throwaway jobs, both pipeline-from-SCM on this repository, no triggers. The 
 fresh (no builds) before `ABORT_AFTER_ACK_DUPLICATE` runs.
 
 ```bash
-jenkins -i ps80 job create probe-pr4532-oracle-cpu-stub -c stub-job.xml   # ps/jenkins/check_oracle_cpu.groovy, params IGNORE_STATE NOTIFY SLACK_STUB PROBE_ABORT_AFTER_NOTIFY, copyArtifactPermission *
-jenkins -i ps80 job create probe-pr4532-repro -c repro-job.xml            # repro/Jenkinsfile, params PR_REPO PR_REF BUGS CONTROL LIVE STUB_JOB
+jenkins -i ps80 job create probe-pr4532-oracle-cpu-stub -c repro/jobs/stub-job.xml   # ps/jenkins/check_oracle_cpu.groovy, params IGNORE_STATE NOTIFY SLACK_STUB PROBE_ABORT_AFTER_NOTIFY, copyArtifactPermission *
+jenkins -i ps80 job create probe-pr4532-repro -c repro/jobs/repro-job.xml            # repro/Jenkinsfile, params PR_REPO PR_REF BUGS CONTROL LIVE STUB_JOB
 jenkins -i ps80 build probe-pr4532-repro -p PR_REPO=https://github.com/marcinbabij/jenkins-pipelines.git -p PR_REF=<sha> -p BUGS=all -p CONTROL=true -p LIVE=true -p STUB_JOB=probe-pr4532-oracle-cpu-stub
 jenkins -i ps80 artifacts probe-pr4532-repro -m 'repro/out/repro-report.json' -D ./out
 echo y | jenkins -i ps80 job delete probe-pr4532-repro

@@ -1,0 +1,65 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<flow-definition plugin="workflow-job">
+  <description>THROWAWAY stub job for Percona-Lab/jenkins-pipelines PR 4532 review (check-oracle-cpu). PR groovy with every slackSend replaced by a local stub (SLACK_STUB) plus a probe-only abort-after-Notify switch. Driven by probe-pr4532-repro for ABORT_AFTER_ACK_DUPLICATE. No cron trigger. Owner: Anderson Nogueira. Delete after the review.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.plugins.copyartifact.CopyArtifactPermissionProperty plugin="copyartifact">
+      <projectNameList>
+        <string>*</string>
+      </projectNameList>
+    </hudson.plugins.copyartifact.CopyArtifactPermissionProperty>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.BooleanParameterDefinition>
+          <name>IGNORE_STATE</name>
+          <description>Reset CVE comparison for this run.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>NOTIFY</name>
+          <description>none | latest | all</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>none</string>
+              <string>latest</string>
+              <string>all</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>SLACK_STUB</name>
+          <description>PROBE ONLY: ok | null | throw</description>
+          <defaultValue>ok</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>PROBE_ABORT_AFTER_NOTIFY</name>
+          <description>PROBE ONLY: mark the build ABORTED right after the Notify stage</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/nogueiraanderson/probe-pr4532-oracle-cpu.git</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/main</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <scriptPath>ps/jenkins/check_oracle_cpu.groovy</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

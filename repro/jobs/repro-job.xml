@@ -1,0 +1,67 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<flow-definition plugin="workflow-job">
+  <description>THROWAWAY reproducer pipeline for Percona-Lab/jenkins-pipelines PR 4532 review (check-oracle-cpu). Runs repro/Jenkinsfile from nogueiraanderson/probe-pr4532-oracle-cpu against a read-only clone of the PR tree, mock Oracle on loopback, Slack stubbed. No cron trigger. Owner: Anderson Nogueira. Delete after the review.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>PR_REPO</name>
+          <description>Repository that holds the PR tree</description>
+          <defaultValue>https://github.com/marcinbabij/jenkins-pipelines.git</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PR_REF</name>
+          <description>Commit, branch or tag of the PR tree</description>
+          <defaultValue>14df4a3da782d436333ea88a3a6e61a3981a4c75</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>BUGS</name>
+          <description>all, or a comma list of check ids</description>
+          <defaultValue>all</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>CONTROL</name>
+          <description>Re-run each reproduced check on a patched copy, it must flip</description>
+          <defaultValue>true</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>LIVE</name>
+          <description>SCOPE_ALL_PRODUCTS also polls the real newest Oracle advisory</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>STUB_JOB</name>
+          <description>Fresh throwaway stub job for ABORT_AFTER_ACK_DUPLICATE</description>
+          <defaultValue>probe-pr4532-oracle-cpu-stub</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/nogueiraanderson/probe-pr4532-oracle-cpu.git</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/main</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <scriptPath>repro/Jenkinsfile</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
