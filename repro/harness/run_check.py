@@ -11,8 +11,10 @@ Exit code is 0 unless the arguments are wrong: the report step decides the build
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,20 +37,44 @@ def run_detector(check_id: str, ctx: Context) -> Outcome:
         return Outcome(HARNESS_ERROR, [f"harness crashed: {type(exc).__name__}: {exc}", traceback.format_exc()[-1500:]])
 
 
+def _tree_digest(root: Path) -> dict[str, str]:
+    digests = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts:
+            digests[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digests
+
+
 def apply_patch(pr_dir: Path, patch: Path, control_root: Path) -> tuple[Path, list[str]]:
-    """Copy ps/jenkins from the PR tree and apply the fix patch with git apply."""
+    """Copy ps/jenkins from the PR tree into its own git repo and apply the fix patch there.
+
+    The copy is made a repository of its own on purpose: inside a Jenkins
+    workspace (a git worktree) `git apply` resolves patch paths against the
+    enclosing repo root and silently ignores paths outside the current
+    directory, exit 0. Fail closed: the patched files must really change.
+    """
     if control_root.exists():
         shutil.rmtree(control_root)
     target = control_root / "ps" / "jenkins"
     shutil.copytree(pr_dir, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    before = _tree_digest(target)
+    init = subprocess.run(["git", "init", "-q", "."], cwd=str(control_root), capture_output=True, text=True)
+    if init.returncode != 0:
+        raise HarnessError(f"git init of the control copy failed: {init.stderr.strip()[:200]}")
     check = subprocess.run(["git", "apply", "--check", str(patch.resolve())], cwd=str(control_root), capture_output=True, text=True)
     if check.returncode != 0:
         raise HarnessError(f"fix patch does not apply: {check.stderr.strip()[:400]}")
-    applied = subprocess.run(["git", "apply", "--stat", "--apply", str(patch.resolve())], cwd=str(control_root), capture_output=True, text=True)
+    applied = subprocess.run(["git", "apply", "--verbose", str(patch.resolve())], cwd=str(control_root), capture_output=True, text=True)
     if applied.returncode != 0:
         raise HarnessError(f"git apply failed: {applied.stderr.strip()[:400]}")
-    stat = [line.strip() for line in applied.stdout.splitlines() if "|" in line]
-    return target, stat
+    after = _tree_digest(target)
+    changed = sorted(name for name in before if before[name] != after.get(name)) + sorted(set(after) - set(before))
+    if not changed:
+        raise HarnessError("git apply reported success but no file in the control copy changed")
+    expected = sorted(set(re.findall(r"^\+\+\+ b/ps/jenkins/(.+)$", patch.read_text(encoding="utf-8"), re.M)))
+    if expected and sorted(changed) != expected:
+        raise HarnessError(f"patch touched {changed}, expected {expected}")
+    return target, [f"{name} changed, sha256 {before.get(name, 'new')[:12]} -> {after[name][:12]}" for name in changed]
 
 
 def main() -> None:
