@@ -1,0 +1,44 @@
+--- /tmp/claude-1000/-home-percona/44587252-f6e1-474a-9cbd-5151867d91d4/scratchpad/check_oracle_cpu.groovy.orig	2026-10-06 13:47:35.177539506 +0000
++++ ps/jenkins/check_oracle_cpu.groovy	2026-10-06 13:47:35.195539508 +0000
+@@ -101,6 +101,20 @@
+     ]
+ }
+ 
++// PROBE ONLY (PR 4532 review): stands in for slackSend. Never contacts Slack.
++def cpuSlackStub(Map args) {
++    def mode = (params.SLACK_STUB ?: 'ok').toString().trim()
++    echo "PROBE slackSend stub mode=${mode} channel=${args.channel} messageLength=${(args.message ?: '').toString().length()}"
++    if (mode == 'null') {
++        return null
++    }
++    if (mode == 'throw') {
++        throw new RuntimeException('probe stub: simulated slackSend exception')
++    }
++    def ts = "1700000000.0000${env.BUILD_NUMBER}".toString()
++    return [channelId: 'CPROBE000', ts: ts, threadId: "CPROBE000:${ts}".toString()]
++}
++
+ // Ten advisories, not five. A fix can land in a later tag for a CVE
+ // published in an older CPU or CSPU, and the stored JSON stays small.
+ def ADVISORY_COUNT = '10'
+@@ -121,6 +135,11 @@
+             choices: ['none', 'latest', 'all'],
+             description: 'Also post unchanged advisories. latest is the newest report only. all posts every watched report, each in its own Slack thread.'
+         )
++        string(
++            name: 'SLACK_STUB',
++            defaultValue: 'ok',
++            description: 'PROBE ONLY (PR 4532 review): slackSend replacement. ok returns a fake response, null returns null, throw throws.'
++        )
+     }
+     options {
+         disableConcurrentBuilds()
+@@ -289,7 +308,7 @@
+                             def deliveredOn = 0
+                             def misses = []
+                             for (attempt in [1, 2, 3]) {
+-                                response = slackSend(
++                                response = cpuSlackStub(
+                                     botUser: true,
+                                     channel: target,
+                                     color: '#00FF00',
