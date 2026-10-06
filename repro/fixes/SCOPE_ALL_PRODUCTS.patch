@@ -1,0 +1,44 @@
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 2f1cbfa..cc251aa 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -34,6 +34,10 @@ HREF_RE = re.compile(
+ )
+ CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.I)
+ CSAF_RE = re.compile(r'href="([^"]+csaf\.json)"', re.I)
++MYSQL_MATRIX_RE = re.compile(r"<h[1-6][^>]*>\s*Oracle MySQL Risk Matrix\s*</h[1-6]>", re.I)
++NEXT_SECTION_RE = re.compile(
++    r"<h[1-6][^>]*>[^<]*(?:Risk Matrix|Modification History)[^<]*</h[1-6]>", re.I
++)
+ MONTH = {
+     "jan": 1,
+     "feb": 2,
+@@ -222,8 +226,18 @@ def strip_modification_history(html: str) -> str:
+     return html[: match.start()] + rest[nxt.start() :]
+ 
+ 
++def mysql_section(html: str) -> str:
++    """Only the Oracle MySQL risk matrix. Other product families are not tracked."""
++    match = MYSQL_MATRIX_RE.search(html)
++    if not match:
++        return ""
++    rest = html[match.end() :]
++    nxt = NEXT_SECTION_RE.search(rest)
++    return rest[: nxt.start()] if nxt else rest
++
++
+ def parse_cves(html: str) -> list[str]:
+-    html = strip_modification_history(html)
++    html = mysql_section(strip_modification_history(html))
+     return sorted({m.group(0).upper() for m in CVE_RE.finditer(html)})
+ 
+ 
+@@ -257,6 +271,8 @@ def bug_map_from_csaf(data: dict[str, Any]) -> dict[str, list[str]]:
+             name = str(item.get("system_name") or "")
+             if "bug id" not in name.lower():
+                 continue
++            if "mysql" not in name.lower():
++                continue
+             bug = str(item.get("text") or "").strip()
+             if not bug.isdigit():
+                 continue

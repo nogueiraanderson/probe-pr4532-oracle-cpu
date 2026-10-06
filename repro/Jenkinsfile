@@ -1,0 +1,162 @@
+// Reproducers for Percona-Lab/jenkins-pipelines PR 4532 (check-oracle-cpu).
+// Groovy stays thin. Every fixture, mock and judgement lives in repro/harness/*.py.
+// The PR tree is cloned read-only into pr/. Fix patches are applied to copies only.
+
+def wanted(String id) {
+    def bugs = (params.BUGS ?: 'all').toString().trim()
+    if (bugs == 'all') {
+        return true
+    }
+    return bugs.split(',').collect { it.trim() }.contains(id)
+}
+
+def runCheck(String id, String extra = '') {
+    def control = params.CONTROL ? '--control' : ''
+    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE', message: "${id} did not finish") {
+        sh "python3 -B repro/harness/run_check.py ${id} --pr pr/ps/jenkins --out repro/out ${control} ${extra}"
+    }
+}
+
+def stubParams(boolean abortAfterNotify) {
+    return [
+        booleanParam(name: 'IGNORE_STATE', value: false),
+        string(name: 'NOTIFY', value: 'none'),
+        string(name: 'SLACK_STUB', value: 'ok'),
+        booleanParam(name: 'PROBE_ABORT_AFTER_NOTIFY', value: abortAfterNotify),
+    ]
+}
+
+pipeline {
+    agent {
+        label 'docker'
+    }
+    parameters {
+        string(name: 'PR_REPO', defaultValue: 'https://github.com/marcinbabij/jenkins-pipelines.git', description: 'Repository that holds the PR tree')
+        string(name: 'PR_REF', defaultValue: '14df4a3da782d436333ea88a3a6e61a3981a4c75', description: 'Commit, branch or tag of the PR tree')
+        string(name: 'BUGS', defaultValue: 'all', description: 'all, or a comma list of check ids')
+        booleanParam(name: 'CONTROL', defaultValue: true, description: 'Re-run each reproduced check on a copy patched with repro/fixes/<id>.patch. It must flip to NOT_REPRODUCED.')
+        booleanParam(name: 'LIVE', defaultValue: false, description: 'SCOPE_ALL_PRODUCTS also polls the real newest Oracle advisory, read-only')
+        string(name: 'STUB_JOB', defaultValue: 'probe-pr4532-oracle-cpu-stub', description: 'Fresh throwaway job built from the stubbed PR groovy, driven by ABORT_AFTER_ACK_DUPLICATE')
+    }
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 90, unit: 'MINUTES')
+    }
+    stages {
+        stage('Prepare') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -euo pipefail
+                    rm -rf pr repro/out
+                    mkdir -p repro/out
+                    git init -q pr
+                    git -C pr remote add origin "${PR_REPO}"
+                    if git -C pr fetch -q --depth 1 origin "${PR_REF}"; then
+                        git -C pr checkout -q FETCH_HEAD
+                    else
+                        git -C pr fetch -q origin
+                        git -C pr checkout -q "${PR_REF}"
+                    fi
+                    echo "PR tree at $(git -C pr rev-parse HEAD)"
+                    test -f pr/ps/jenkins/check_oracle_cpu.groovy
+                    test -f pr/ps/jenkins/oracle_cpu/core.py
+                    python3 --version
+                    git --version
+                    uname -m
+                '''
+            }
+        }
+        stage('SCOPE_ALL_PRODUCTS') {
+            when { expression { wanted('SCOPE_ALL_PRODUCTS') } }
+            options { timeout(time: 15, unit: 'MINUTES') }
+            steps { runCheck('SCOPE_ALL_PRODUCTS', params.LIVE ? '--live' : '') }
+        }
+        stage('NO_DEADLINE') {
+            when { expression { wanted('NO_DEADLINE') } }
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps { runCheck('NO_DEADLINE') }
+        }
+        stage('REDIRECT_ANY_HOST') {
+            when { expression { wanted('REDIRECT_ANY_HOST') } }
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps { runCheck('REDIRECT_ANY_HOST') }
+        }
+        stage('NO_SIZE_CAP') {
+            when { expression { wanted('NO_SIZE_CAP') } }
+            options { timeout(time: 20, unit: 'MINUTES') }
+            steps { runCheck('NO_SIZE_CAP') }
+        }
+        stage('EMPTY_CSAF_WIPES_CACHE') {
+            when { expression { wanted('EMPTY_CSAF_WIPES_CACHE') } }
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps { runCheck('EMPTY_CSAF_WIPES_CACHE') }
+        }
+        stage('MODHIST_DRIFT') {
+            when { expression { wanted('MODHIST_DRIFT') } }
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps { runCheck('MODHIST_DRIFT') }
+        }
+        stage('SILENT_RESEED') {
+            when { expression { wanted('SILENT_RESEED') } }
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps { runCheck('SILENT_RESEED') }
+        }
+        stage('ABORT_AFTER_ACK_DUPLICATE') {
+            when { expression { wanted('ABORT_AFTER_ACK_DUPLICATE') } }
+            options { timeout(time: 30, unit: 'MINUTES') }
+            steps {
+                script {
+                    def stubJob = params.STUB_JOB
+                    // Build A: first build of a fresh stub job, acks its Slack message, then aborts.
+                    def abortRun = build(job: stubJob, propagate: false, wait: true, parameters: stubParams(true))
+                    // Build B: a normal build. StatusBuildSelector skips ABORTED, so it copies nothing.
+                    def normalRun = build(job: stubJob, propagate: false, wait: true, parameters: stubParams(false))
+                    copyArtifacts(
+                        projectName: stubJob,
+                        selector: [$class: 'SpecificBuildSelector', buildNumber: "${abortRun.number}"],
+                        filter: 'cpu-notify.json,cpu-status.txt,cpu-state.json',
+                        target: 'repro/out/stub/A',
+                        flatten: true,
+                        optional: true,
+                        fingerprintArtifacts: false
+                    )
+                    copyArtifacts(
+                        projectName: stubJob,
+                        selector: [$class: 'SpecificBuildSelector', buildNumber: "${normalRun.number}"],
+                        filter: 'cpu-notify.json,cpu-status.txt,cpu-state.json',
+                        target: 'repro/out/stub/B',
+                        flatten: true,
+                        optional: true,
+                        fingerprintArtifacts: false
+                    )
+                    runCheck(
+                        'ABORT_AFTER_ACK_DUPLICATE',
+                        "--stub-a repro/out/stub/A --stub-b repro/out/stub/B --result-a ${abortRun.result} --result-b ${normalRun.result} --number-a ${abortRun.number} --number-b ${normalRun.number} --stub-job ${stubJob}"
+                    )
+                }
+            }
+        }
+        stage('NO_FAILURE_ALERT') {
+            when { expression { wanted('NO_FAILURE_ALERT') } }
+            options { timeout(time: 5, unit: 'MINUTES') }
+            steps { runCheck('NO_FAILURE_ALERT') }
+        }
+    }
+    post {
+        always {
+            sh "python3 -B repro/harness/report.py repro/out '${params.BUGS}'"
+            script {
+                def overall = readFile('repro/out/repro-result.txt').trim()
+                currentBuild.description = readFile('repro/out/repro-description.html').trim()
+                if (overall == 'FAILURE') {
+                    currentBuild.result = 'FAILURE'
+                } else if (overall == 'UNSTABLE') {
+                    unstable('At least one PR 4532 finding reproduced on the PR tree.')
+                }
+            }
+            archiveArtifacts artifacts: 'repro/out/**', excludes: 'repro/out/*/control/**', allowEmptyArchive: true
+        }
+    }
+}

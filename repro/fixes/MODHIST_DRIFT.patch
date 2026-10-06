@@ -1,0 +1,13 @@
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 2f1cbfa..c3815c1 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -209,7 +209,7 @@ def strip_modification_history(html: str) -> str:
+     The following risk-matrix headings stay. Other prose matches are kept.
+     """
+     match = re.search(
+-        r"<h[1-6][^>]*>\s*Modification History\s*</h[1-6]>",
++        r"<h[1-6][^>]*>(?:\s*<[^>]+>)*\s*Modification History\s*(?:</[^>]+>\s*)*</h[1-6]>",
+         html,
+         re.I,
+     )

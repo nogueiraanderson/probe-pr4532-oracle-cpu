@@ -1,0 +1,38 @@
+diff --git a/ps/jenkins/check_oracle_cpu.groovy b/ps/jenkins/check_oracle_cpu.groovy
+index bf88b4b..6093ab1 100644
+--- a/ps/jenkins/check_oracle_cpu.groovy
++++ b/ps/jenkins/check_oracle_cpu.groovy
+@@ -147,16 +147,23 @@ pipeline {
+         stage('Check advisories') {
+             steps {
+                 script {
+-                    // SUCCESS or UNSTABLE. NOT_BUILT is skipped, so the
+-                    // copy is the newest build that archived a checkpoint.
+-                    copyArtifacts(
+-                        projectName: env.JOB_NAME,
+-                        selector: [$class: 'StatusBuildSelector', stable: false],
+-                        filter: "${STATE},${LEGACY_STATE},${LEGACY_SLACK}",
+-                        optional: true,
+-                        flatten: true,
+-                        fingerprintArtifacts: false
+-                    )
++                    // Newest build that archived a checkpoint, whatever its
++                    // result. An ABORTED or FAILED build that already acked
++                    // Slack must stay the copy source, or its messages repeat.
++                    def previous = currentBuild.previousBuild
++                    def copied = false
++                    while (previous != null && !copied) {
++                        copyArtifacts(
++                            projectName: env.JOB_NAME,
++                            selector: [$class: 'SpecificBuildSelector', buildNumber: "${previous.number}"],
++                            filter: "${STATE},${LEGACY_STATE},${LEGACY_SLACK}",
++                            optional: true,
++                            flatten: true,
++                            fingerprintArtifacts: false
++                        )
++                        copied = fileExists(STATE) || fileExists(LEGACY_STATE)
++                        previous = previous.previousBuild
++                    }
+                 }
+                 script {
+                     def notifyMode = params.NOTIFY ?: 'none'

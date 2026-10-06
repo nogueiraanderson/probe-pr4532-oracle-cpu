@@ -1,0 +1,28 @@
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 2f1cbfa..c90d303 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -93,6 +93,13 @@ def _http_get(url: str) -> tuple[int, str, str]:
+         return int(exc.code), "", location
+ 
+ 
++def _allowed(url: str) -> bool:
++    """Only https on oracle.com. Page links and redirects choose what is fetched."""
++    parts = urllib.parse.urlsplit(url)
++    host = (parts.hostname or "").lower()
++    return parts.scheme == "https" and (host == "oracle.com" or host.endswith(".oracle.com"))
++
++
+ def _follow(url: str) -> tuple[str | None, str]:
+     """Follow redirects. The second value is the hop list.
+ 
+@@ -107,6 +114,9 @@ def _follow(url: str) -> tuple[str | None, str]:
+             hops.append(f"repeat {current}")
+             return None, " -> ".join(hops)
+         seen.add(current)
++        if not _allowed(current):
++            hops.append(f"rejected {current}")
++            return None, " -> ".join(hops)
+         try:
+             status, body, location = _http_get(current)
+         except FETCH_ERRORS as exc:

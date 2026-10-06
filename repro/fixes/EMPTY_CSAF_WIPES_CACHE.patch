@@ -1,0 +1,24 @@
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 2f1cbfa..510d1c2 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -327,6 +327,19 @@ def fetch_bug_map(
+             )
+         )
+         return None
++    if not bug_map:
++        log.warning("WARNING cpu CSAF has no bug ids url=%s", csaf_url)
++        notes.append(
++            issue(
++                level="warning",
++                outcome="failed",
++                area="csaf",
++                slug=slug,
++                attempts=1,
++                message=f"{slug} CSAF document has no bug ids. Previous bug map kept.",
++            )
++        )
++        return None
+     log.info("cpu CSAF url=%s bugs=%d", csaf_url, len(bug_map))
+     return bug_map
+ 

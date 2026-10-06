@@ -140,6 +140,11 @@ pipeline {
             defaultValue: 'ok',
             description: 'PROBE ONLY (PR 4532 review): slackSend replacement. ok returns a fake response, null returns null, throw throws.'
         )
+        booleanParam(
+            name: 'PROBE_ABORT_AFTER_NOTIFY',
+            defaultValue: false,
+            description: 'PROBE ONLY (PR 4532 review): after the Notify stage, mark this build ABORTED and stop. Models an abort that lands after Slack was acked.'
+        )
     }
     options {
         disableConcurrentBuilds()
@@ -400,6 +405,19 @@ pipeline {
                         }
                     }
                     cpuArchiveMapping(REPORT, BUGS, [STATE, BUGS])
+                }
+            }
+        }
+        stage('Probe after Notify') {
+            steps {
+                script {
+                    // PROBE ONLY (PR 4532 review): keep the Slack manifest for the
+                    // reproducer, then abort on request. Nothing above this stage changes.
+                    archiveArtifacts artifacts: 'cpu-notify.json', allowEmptyArchive: true
+                    if (params.PROBE_ABORT_AFTER_NOTIFY) {
+                        currentBuild.result = 'ABORTED'
+                        error 'PROBE: aborted after Notify on request'
+                    }
                 }
             }
         }

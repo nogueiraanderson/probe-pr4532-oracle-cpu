@@ -1,0 +1,48 @@
+diff --git a/ps/jenkins/check_oracle_cpu.groovy b/ps/jenkins/check_oracle_cpu.groovy
+index bf88b4b..b2b370d 100644
+--- a/ps/jenkins/check_oracle_cpu.groovy
++++ b/ps/jenkins/check_oracle_cpu.groovy
+@@ -130,6 +130,7 @@ pipeline {
+         // setKeepLog would also keep artifacts and skip that rotation.
+         buildDiscarder(logRotator(numToKeepStr: '100', artifactNumToKeepStr: '10'))
+         timestamps()
++        timeout(time: 30, unit: 'MINUTES')
+         // Production mode rejects copyArtifacts unless the source job names
+         // the reader. This job copies its own last build. '*' also covers a
+         // later job that reads the bug map.
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 2f1cbfa..20c4b08 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -66,6 +66,22 @@ MONTH_NAME = {
+ _REDIRECTS = frozenset({301, 302, 303, 307, 308})
+ 
+ 
++BODY_DEADLINE = 20.0  # seconds for one response body, a slow drip ends here
++
++
++def _read_body(resp) -> bytes:
++    """Read the body under a wall-clock deadline. read1 returns what is buffered."""
++    chunks: list[bytes] = []
++    end = time.monotonic() + BODY_DEADLINE
++    while True:
++        if time.monotonic() > end:
++            raise TimeoutError(f"response body exceeded {BODY_DEADLINE:.0f}s")
++        chunk = resp.read1(65536)
++        if not chunk:
++            return b"".join(chunks)
++        chunks.append(chunk)
++
++
+ def _http_get(url: str) -> tuple[int, str, str]:
+     """One GET without following redirects. Returns status, body, Location."""
+ 
+@@ -85,7 +101,7 @@ def _http_get(url: str) -> tuple[int, str, str]:
+             location = resp.headers.get("Location") or ""
+             if status in _REDIRECTS:
+                 return status, "", location
+-            return status, resp.read().decode("utf-8", "replace"), ""
++            return status, _read_body(resp).decode("utf-8", "replace"), ""
+     except urllib.error.HTTPError as exc:
+         location = ""
+         if exc.headers is not None:

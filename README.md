@@ -6,5 +6,8 @@ Throwaway workflow probe for [Percona-Lab/jenkins-pipelines PR 4532](https://git
 
 - Every `slackSend(...)` call is replaced by `cpuSlackStub(...)`, a local function that never contacts Slack.
 - A new string parameter `SLACK_STUB` drives the stub: `ok` returns a fake `[channelId, ts, threadId]` map, `null` returns null, `throw` throws.
+- A probe-only boolean `PROBE_ABORT_AFTER_NOTIFY` and a `Probe after Notify` stage archive `cpu-notify.json` and, on request, mark the build ABORTED after Slack was acked (for the duplicate-delivery reproducer).
 
 See `STUB.diff` for the exact change. Used by a temporary pipeline job on one Jenkins master to drive builds B1..B5 (first run, unchanged run, IGNORE_STATE, failed Slack, pending flush). No real Slack post is possible from this tree.
+
+`repro/` holds the bug-reproduction pipeline (nine checks, mock Oracle, fix patches), see `repro/README.md`.

@@ -1,0 +1,22 @@
+diff --git a/ps/jenkins/oracle_cpu/pipeline.py b/ps/jenkins/oracle_cpu/pipeline.py
+index 493e029..162e03e 100644
+--- a/ps/jenkins/oracle_cpu/pipeline.py
++++ b/ps/jenkins/oracle_cpu/pipeline.py
+@@ -274,6 +274,17 @@ def poll(
+         before_sig = persistent_signature(state) if comparable else None
+         previous = state["advisories"] if state["advisories"] else None
+         run["baseline_present"] = previous is not None
++        if previous is None and not ignore_state:
++            notes.append(
++                issue(
++                    level="warning",
++                    outcome="failed",
++                    area="baseline",
++                    message="No CVE baseline found. This poll reseeds from the live pages.",
++                    fallback="every advisory is stored as new",
++                    impact="the newest advisory is posted as a first list",
++                )
++            )
+         if not index_ok:
+             changes, advisories = apply_state([], previous)
+         else:

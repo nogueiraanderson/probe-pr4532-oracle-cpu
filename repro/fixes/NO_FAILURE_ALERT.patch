@@ -1,0 +1,20 @@
+diff --git a/ps/jenkins/check_oracle_cpu.groovy b/ps/jenkins/check_oracle_cpu.groovy
+index bf88b4b..6f61190 100644
+--- a/ps/jenkins/check_oracle_cpu.groovy
++++ b/ps/jenkins/check_oracle_cpu.groovy
+@@ -427,5 +427,15 @@ pipeline {
+                 }
+             }
+         }
++        unsuccessful {
++            // The watcher itself failed or went UNSTABLE. Tell the channel.
++            slackSend(
++                botUser: true,
++                channel: SLACK_CHANNEL,
++                color: 'danger',
++                message: "[${JOB_NAME}]: Oracle CPU poll ${currentBuild.currentResult}, build ${BUILD_NUMBER}: ${BUILD_URL}",
++                failOnError: false
++            )
++        }
+     }
+ }
