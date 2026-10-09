@@ -1,11 +1,4 @@
-library changelog: false, identifier: 'lib@master', retriever: modernSCM([
-    $class: 'GitSCMSource',
-    remote: 'https://github.com/Percona-Lab/jenkins-pipelines.git'
-]) _
-
 def STATE = 'cpu-state.json'
-def LEGACY_STATE = 'cpu-cves.json'
-def LEGACY_SLACK = 'cpu-slack.json'
 def BUGS = 'cpu-bug-cve.json'
 def MANIFEST = 'cpu-notify.json'
 def REPORT = 'cpu-run.json'
@@ -148,6 +141,10 @@ pipeline {
     }
     options {
         disableConcurrentBuilds()
+        // Each Oracle read aborts after 120 s of socket silence. A slow
+        // body can still run without end, and disableConcurrentBuilds
+        // then holds every later cron trigger until that build finishes.
+        timeout(time: 30, unit: 'MINUTES')
         // removeLastBuild stays false. LogRotator then keeps the last
         // successful build and the last stable build, including their
         // artifacts, after NOT_BUILT polls rotate the rest.
@@ -164,23 +161,32 @@ pipeline {
             steps {
                 // post reads these files. A failed test must not summarize
                 // the previous build's workspace copy.
-                sh "rm -rf ${STATE} ${LEGACY_STATE} ${LEGACY_SLACK} ${BUGS} ${MANIFEST} ${REPORT} ${STATUS} ${POLL_RC} cpu-description.txt cpu-note.json cpu-thread.json cpu-cves-diff.json cpu-notify cpu-degraded.txt cpu-publish cpu-events.jsonl cpu-event.json"
-                sh 'python3 -m unittest discover -s ps/jenkins/tests -t ps/jenkins'
+                sh "rm -rf ${STATE} ${BUGS} ${MANIFEST} ${REPORT} ${STATUS} ${POLL_RC} cpu-description.txt cpu-note.json cpu-thread.json"
+                sh 'python3 -m unittest discover -s ps/jenkins/tests -t ps/jenkins -p test_oracle_cpu.py'
             }
         }
         stage('Check advisories') {
             steps {
                 script {
-                    // SUCCESS or UNSTABLE. NOT_BUILT is skipped, so the
-                    // copy is the newest build that archived a checkpoint.
-                    copyArtifacts(
-                        projectName: env.JOB_NAME,
-                        selector: [$class: 'StatusBuildSelector', stable: false],
-                        filter: "${STATE},${LEGACY_STATE},${LEGACY_SLACK}",
-                        optional: true,
-                        flatten: true,
-                        fingerprintArtifacts: false
-                    )
+                    // Newest completed build that archived the checkpoint,
+                    // including ABORTED and FAILURE. NOT_BUILT has no file,
+                    // so the walk continues. StatusBuildSelector would skip
+                    // an abort that already stored a confirmed Slack ack.
+                    def run = currentBuild.previousBuild
+                    while (run != null) {
+                        copyArtifacts(
+                            projectName: env.JOB_NAME,
+                            selector: [$class: 'SpecificBuildSelector', buildNumber: "${run.number}"],
+                            filter: STATE,
+                            optional: true,
+                            flatten: true,
+                            fingerprintArtifacts: false
+                        )
+                        if (fileExists(STATE)) {
+                            break
+                        }
+                        run = run.previousBuild
+                    }
                 }
                 script {
                     def notifyMode = params.NOTIFY ?: 'none'
@@ -461,6 +467,16 @@ pipeline {
                         throw err
                     }
                     echo "WARNING cpu status publish failed: ${err}"
+                }
+            }
+        }
+        aborted {
+            script {
+                // ack can update the workspace file before the mid-loop
+                // archive returns. This build stays ABORTED. The next poll
+                // still finds the file by walking previous builds.
+                if (fileExists(STATE)) {
+                    archiveArtifacts artifacts: STATE, allowEmptyArchive: false
                 }
             }
         }

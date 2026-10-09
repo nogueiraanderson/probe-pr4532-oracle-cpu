@@ -11,9 +11,15 @@ from unittest.mock import patch
 
 from oracle_cpu.core import (
     Collection,
+    _component_name,
     _fetch,
+    _read_body,
+    INDEX,
     bug_map_from_csaf,
+    collect,
     cve_sha,
+    format_slack,
+    mysql_cve_components,
     parse_cves,
 )
 from oracle_cpu.diagnostics import load_report, write_status
@@ -57,6 +63,71 @@ class OracleCpuTest(unittest.TestCase):
         )
         self.assertEqual(bugs, {"38888307": ["CVE-2026-1000"]})
 
+    def test_download_stops_past_the_size_limit(self) -> None:
+        class _Body:
+            def __init__(self, parts: list[bytes], length: str | None) -> None:
+                self._parts = list(parts)
+                self.headers = {} if length is None else {"Content-Length": length}
+
+            def read(self, _size: int) -> bytes:
+                if not self._parts:
+                    return b""
+                return self._parts.pop(0)
+
+        self.assertEqual(_read_body(_Body([b"abc"], "3"), limit=10), b"abc")
+        with self.assertRaises(urllib.error.URLError):
+            _read_body(_Body([], "11"), limit=10)
+        with self.assertRaises(urllib.error.URLError):
+            _read_body(_Body([b"aaaaaa", b"bbbbbb"], None), limit=10)
+
+    def test_mysql_counts_and_components_follow_the_cve_diff(self) -> None:
+        text = (
+            "Vulnerability in the MySQL Server product of Oracle MySQL "
+            "(component: Server: InnoDB)."
+        )
+        nested = (
+            "Vulnerability in the Oracle Communications Unified Assurance product "
+            "of Oracle Communications (component: Core (MySQL Server))."
+        )
+        self.assertEqual(_component_name(text), "Server: InnoDB")
+        self.assertEqual(_component_name(nested), "Core (MySQL Server)")
+        components = mysql_cve_components(
+            {
+                "vulnerabilities": [
+                    {
+                        "cve": "CVE-2026-1000",
+                        "notes": [{"category": "description", "text": text}],
+                    },
+                    {
+                        "cve": "CVE-2026-1001",
+                        "notes": [
+                            {
+                                "category": "description",
+                                "text": text.replace("InnoDB", "Optimizer"),
+                            }
+                        ],
+                    },
+                    {
+                        "cve": "CVE-2026-2000",
+                        "notes": [{"category": "description", "text": nested}],
+                    },
+                ]
+            }
+        )
+        self.assertEqual(
+            components,
+            {"CVE-2026-1000": "Server: InnoDB", "CVE-2026-1001": "Server: Optimizer"},
+        )
+        slack = format_slack(
+            ["CVE-2026-1000"],
+            ["CVE-2026-1000", "CVE-2026-1001", "CVE-2026-2000"],
+            components=components,
+            bug_maps=[{"38888307": ["CVE-2026-1001"], "38888308": ["CVE-2026-1001"]}],
+        )
+        self.assertIn("+2 -0 CVEs", slack)
+        self.assertIn("MySQL: +1 -0", slack)
+        self.assertIn("Server: Optimizer (2)", slack)
+
     def test_parser_skips_modification_history(self) -> None:
         html = (
             "<h2>Risk</h2><p>CVE-2026-0001</p>"
@@ -71,12 +142,10 @@ class OracleCpuTest(unittest.TestCase):
                 "sha": "older",
                 "cves": ["CVE-2026-2", "CVE-2021-22555"],
                 "bug_cves": {"1": ["CVE-2026-2"]},
-                "parser": 0,
             }
         }
         changes, rows = apply_state([_fresh("cpuapr2026", ["CVE-2026-2"])], previous)
         self.assertEqual(changes[0]["removed"], ["CVE-2021-22555"])
-        self.assertNotIn("parser", rows["cpuapr2026"])
 
     def test_failed_csaf_keeps_the_cached_map_and_empty_map_replaces_it(self) -> None:
         previous = {
@@ -84,7 +153,6 @@ class OracleCpuTest(unittest.TestCase):
                 "sha": cve_sha(["CVE-2026-1"]),
                 "cves": ["CVE-2026-1"],
                 "bug_cves": {"9": ["CVE-2026-1"]},
-                "parser": 1,
             }
         }
         kept = _fresh("cpuapr2026", ["CVE-2026-1"])
@@ -121,7 +189,6 @@ class OracleCpuTest(unittest.TestCase):
                                 "sha": "def",
                                 "cves": ["CVE-2026-1"],
                                 "bug_cves": {"9": ["CVE-2026-1"]},
-                                "parser": 1,
                             }
                         },
                     }
@@ -141,54 +208,10 @@ class OracleCpuTest(unittest.TestCase):
             self.assertEqual(state["advisories"]["cpuapr2026"]["bug_cves"]["9"], ["CVE-2026-1"])
             self.assertFalse(path.with_name(path.name + ".tmp").exists())
 
-    def test_legacy_files_import_pending_and_threads(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "cpu-cves.json").write_text(
-                json.dumps(
-                    {
-                        "parser": 0,
-                        "advisories": {
-                            "cpujul2026": {
-                                "sha": "a",
-                                "cves": ["CVE-2026-1"],
-                                "bug_cves": {},
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            (root / "cpu-slack.json").write_text(
-                json.dumps(
-                    {
-                        "threads": {"cpujul2026": {"threadId": "9.9", "channelId": "C", "ts": "9.9"}},
-                        "pending": [
-                            {
-                                "id": "cpujul2026:a-b-1",
-                                "slug": "cpujul2026",
-                                "sha": "b",
-                                "slack": "text",
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            state, notes = load_state(root / "cpu-state.json")
-            self.assertNotIn("parser", state["advisories"]["cpujul2026"])
-            self.assertEqual(state["pending"][0]["id"], "cpujul2026:a-b-1")
-            self.assertEqual(state["threads"]["cpujul2026"]["threadId"], "9.9")
-            self.assertEqual(notes[0]["outcome"], "imported")
-
-    def test_corrupt_state_does_not_read_legacy_files(self) -> None:
+    def test_corrupt_state_is_not_a_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "cpu-state.json").write_text("{", encoding="utf-8")
-            (root / "cpu-cves.json").write_text(
-                json.dumps({"advisories": {"cpuapr2026": {"cves": ["CVE-2026-1"], "bug_cves": {}}}}),
-                encoding="utf-8",
-            )
             state, notes = load_state(root / "cpu-state.json")
             self.assertEqual(state["advisories"], {})
             self.assertEqual(notes[0]["area"], "baseline")
@@ -199,13 +222,11 @@ class OracleCpuTest(unittest.TestCase):
                 "sha": "n",
                 "cves": ["CVE-2026-9"],
                 "bug_cves": {"1": ["CVE-2026-9"]},
-                "parser": 1,
             },
             "cpuapr2026": {
                 "sha": "o",
                 "cves": ["CVE-2026-1"],
                 "bug_cves": {"2": ["CVE-2026-1"]},
-                "parser": 1,
             },
         }
         changes, rows = apply_state(
@@ -241,7 +262,6 @@ class OracleCpuTest(unittest.TestCase):
                                 "sha": "b",
                                 "cves": ["CVE-2026-1"],
                                 "bug_cves": {"9": ["CVE-2026-1"]},
-                                "parser": 1,
                             }
                         },
                     }
@@ -292,7 +312,6 @@ class OracleCpuTest(unittest.TestCase):
                     "sha": cve_sha(["CVE-2026-1"]),
                     "cves": ["CVE-2026-1"],
                     "bug_cves": {},
-                    "parser": 1,
                     "title": "CPU April 2026",
                     "url": "https://example.test/cpuapr2026.html",
                 }
@@ -385,6 +404,46 @@ class OracleCpuTest(unittest.TestCase):
         before = {"threads": {}, "pending": [{"id": "a", "slug": "s", "sha": "1", "slack": "t"}], "advisories": {}}
         after = {"threads": {}, "pending": [], "advisories": {}}
         self.assertNotEqual(persistent_signature(before), persistent_signature(after))
+
+    def test_collect_omits_a_failed_page_and_keeps_an_empty_csaf_map(self) -> None:
+        index = (
+            '<a href="https://www.oracle.com/security-alerts/cpujul2026.html"></a>'
+            '<a href="https://www.oracle.com/security-alerts/cpuapr2026.html"></a>'
+        )
+        page = (
+            "<h2>Risk</h2><p>CVE-2026-0001</p>"
+            '<a href="cpuapr2026csaf.json"></a>'
+        )
+
+        def fake_fetch(url: str, failed: list[str]) -> str:
+            failed.clear()
+            if url == INDEX:
+                return index
+            if url.endswith("cpujul2026.html"):
+                raise urllib.error.URLError("page down")
+            if url.endswith("cpuapr2026.html"):
+                return page
+            if url.endswith("csaf.json"):
+                return '{"vulnerabilities":[]}'
+            raise AssertionError(url)
+
+        with patch("oracle_cpu.core._fetch", fake_fetch):
+            collected = collect(10)
+        advisories = {item["slug"]: item for item in collected.advisories}
+        self.assertNotIn("cpujul2026", advisories)
+        self.assertTrue(
+            any(
+                note.get("level") == "warning"
+                and note.get("area") == "page"
+                and note.get("slug") == "cpujul2026"
+                for note in collected.notes
+            )
+        )
+        row = advisories["cpuapr2026"]
+        self.assertEqual(row["cves"], ["CVE-2026-0001"])
+        self.assertIsNotNone(row["bug_cves"])
+        self.assertEqual(row["bug_cves"], {})
+        self.assertEqual(row["cve_components"], {})
 
     def test_csaf_404_names_the_redirect_target(self) -> None:
         published = "https://www.oracle.com/docs/tech/security-alerts/cspumay2026csaf.json"
