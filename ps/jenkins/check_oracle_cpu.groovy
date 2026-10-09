@@ -468,13 +468,10 @@ pipeline {
                     }
                     echo "WARNING cpu status publish failed: ${err}"
                 }
-            }
-        }
-        aborted {
-            script {
-                // ack can update the workspace file before the mid-loop
-                // archive returns. This build stays ABORTED. The next poll
-                // still finds the file by walking previous builds.
+                // Every build keeps the checkpoint it holds, so the newest
+                // build always has one and artifactNumToKeep never purges
+                // the only copy. An ABORTED or NOT_BUILT build is not the
+                // last successful build, so LogRotator does not protect it.
                 if (fileExists(STATE)) {
                     archiveArtifacts artifacts: STATE, allowEmptyArchive: false
                 }
