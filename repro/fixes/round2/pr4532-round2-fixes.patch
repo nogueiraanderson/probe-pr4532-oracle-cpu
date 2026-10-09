@@ -1,0 +1,69 @@
+diff --git a/ps/jenkins/check_oracle_cpu.groovy b/ps/jenkins/check_oracle_cpu.groovy
+index 17b89bb..0db3966 100644
+--- a/ps/jenkins/check_oracle_cpu.groovy
++++ b/ps/jenkins/check_oracle_cpu.groovy
+@@ -431,15 +431,19 @@ pipeline {
+                     }
+                     echo "WARNING cpu status publish failed: ${err}"
+                 }
+-            }
+-        }
+-        aborted {
+-            script {
+-                // ack can update the workspace file before the mid-loop
+-                // archive returns. This build stays ABORTED. The next poll
+-                // still finds the file by walking previous builds.
+-                if (fileExists(STATE)) {
+-                    archiveArtifacts artifacts: STATE, allowEmptyArchive: false
++                // Every build keeps the checkpoint it holds, so the newest
++                // build always has one and artifactNumToKeep never purges
++                // the only copy. An ABORTED or NOT_BUILT build is not the
++                // last successful build, so LogRotator does not protect it.
++                try {
++                    if (fileExists(STATE)) {
++                        archiveArtifacts artifacts: STATE, allowEmptyArchive: false
++                    }
++                } catch (Exception err) {
++                    if (err instanceof InterruptedException) {
++                        throw err
++                    }
++                    echo "WARNING cpu checkpoint archive failed: ${err}"
+                 }
+             }
+         }
+diff --git a/ps/jenkins/oracle_cpu/core.py b/ps/jenkins/oracle_cpu/core.py
+index 1fa570a..4486f26 100644
+--- a/ps/jenkins/oracle_cpu/core.py
++++ b/ps/jenkins/oracle_cpu/core.py
+@@ -88,6 +88,10 @@ def _read_body(resp: Any, limit: int = MAX_DOWNLOAD_BYTES) -> bytes:
+         if total > limit:
+             raise urllib.error.URLError(f"response exceeded {limit} bytes")
+         chunks.append(chunk)
++    # read(amt) returns b"" at a premature close instead of raising, unlike
++    # read(). A short body must stay a retryable IncompleteRead.
++    if declared is not None and str(declared).strip().isdigit() and total != size:
++        raise http.client.IncompleteRead(b"".join(chunks), size - total)
+     return b"".join(chunks)
+ 
+ 
+diff --git a/ps/jenkins/tests/test_oracle_cpu.py b/ps/jenkins/tests/test_oracle_cpu.py
+index 7fa3983..441ccd0 100644
+--- a/ps/jenkins/tests/test_oracle_cpu.py
++++ b/ps/jenkins/tests/test_oracle_cpu.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import http.client
+ import json
+ import tempfile
+ import unittest
+@@ -79,6 +80,8 @@ class OracleCpuTest(unittest.TestCase):
+             _read_body(_Body([], "11"), limit=10)
+         with self.assertRaises(urllib.error.URLError):
+             _read_body(_Body([b"aaaaaa", b"bbbbbb"], None), limit=10)
++        with self.assertRaises(http.client.IncompleteRead):
++            _read_body(_Body([b"abc"], "200"), limit=1000)
+ 
+     def test_mysql_counts_and_components_follow_the_cve_diff(self) -> None:
+         text = (
